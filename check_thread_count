@@ -1,0 +1,38 @@
+#!/bin/bash
+# check_thread_count
+# Jacob Elder <jacob.elder@gmail.com>
+# $Id: check_thread_count 25604 2007-08-23 19:55:03Z jelder $
+if [ -z "$1" -o -z "$2" -o -z "$3" ] ; then
+	echo "Usage: $0 PID WARN CRIT"
+	echo "PID may be numeric or path to PID file."
+	exit 75
+fi
+
+pid=$1
+warning=$2
+critical=$3
+
+if [ -f ${pid} ] ; then
+	pid=`cat ${pid}`
+fi
+
+threads=`ps --no-headers -o nlwp -p ${pid} 2>/dev/null || echo 0`
+threads=`printf '%g' ${threads}`
+
+. /usr/lib/nagios/plugins/utils.sh
+
+if [ ${threads} -le 1 ] ; then
+	echo "UNKNOWN: No threads?";
+	exit $STATE_UNKNOWN
+elif [ ${threads} -ge ${critical} ] ; then
+	echo "CRITICAL: ${threads} running threads!"
+	exit $STATE_CRITICAL
+elif [ ${threads} -ge ${warning} ] ; then
+	echo "WARNING: ${threads} running threads."
+	exit $STATE_WARNING
+else
+	echo "OK: ${threads} running threads.";
+	exit $STATE_OK	
+fi
+
+	

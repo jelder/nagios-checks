@@ -1,0 +1,145 @@
+#!/usr/bin/perl
+# Monitor growth of slow query log
+# Jacob Elder <jacob.elder@gmail.com> 
+# $Id: check_sql_growth 25705 2007-08-28 15:08:15Z jelder $
+
+my $warn = 3;
+my $crit = 9;
+my $dry = 0;
+my @locks = qw(/tmp/ust_lock /tmp/gpp_lock);
+my $lock_allowance = 10;
+my $file = '';		# slow-queries.log
+my $countfile = '';	# .slow-queries.logcount
+my $count = 0;
+my $lastcount = 0;
+my $lastcount_time;
+my $delta = 0;		# Number of new slow queries since last invocation
+
+use strict;
+use warnings;
+
+use lib '/usr/lib/nagios/plugins';
+use utils '%ERRORS';
+
+use Getopt::Long;
+
+sub help() {
+	print <<END;
+Usage: check_sql_growth OPTIONS
+
+        --help, -h      Show this help text
+	--warn, -w      Delta to trigger a warning (default is $warn)
+	--crit, -c      Delta to trigger a critical (default is $crit) 
+	--dry-run       Don't modify count file.
+
+Counts the number of new queries in the slow query log since last invocation
+and alerts appropriately.
+
+Location of slow query log is determined by parsing /etc/my.cnf.
+
+If any lock exists, the values for --warn and --crit will be increased
+by $lock_allowance. This is to prevent extra alerts during search table generation.
+
+The script is aware of the following locks:
+END
+
+	print "$_ " for @locks; print "\n";
+
+	exit $ERRORS{UNKNOWN}; 
+}
+
+GetOptions(
+	'help|h'	=> \&help,
+	'warn|w=s'	=> \$warn,
+	'crit|c=s'	=> \$crit,
+	'dry-run!'	=> \$dry,
+) or help;
+
+# Extract log file name from my.cnf
+open CONF, '</etc/my.cnf' or die $!;
+while (<CONF>) {
+	chomp;
+	$file = $1 if /^\s*log_slow_queries=(.*)/;
+}
+close CONF;
+
+unless ($file) {
+	print STDERR "UNKNOWN: Couldn't find log_slow_queries in /etc/my.cnf!\n";
+	exit $ERRORS{UNKNOWN};
+}
+
+# Look for the end of a query.
+open FILE, $file or die "$file: $!";
+while (<FILE>) {
+	chomp;
+	next if /^(use|set)/i;
+	$count++ if /;$/i;
+}
+close FILE;
+
+# Get the number of slow queries at last invocation.
+{
+	$file =~ m#(.*/)(.*)$#;
+	$countfile = "$1.$2count";
+}
+
+# Create $countfile if it doesn't already exist.
+unless (-f $countfile) {
+	open COUNT, ">>$countfile" or die "$countfile: $!";
+	print COUNT '';
+	close COUNT;
+}
+
+# Get the hours since the last count.
+$lastcount_time = ( time - (stat $countfile)[9] ) / (60 * 60);
+$lastcount_time = sprintf '%.2f', $lastcount_time;
+
+# Get the number of records at last count.
+open COUNT, "+<$countfile" or die "$countfile: $!";
+$lastcount = <COUNT>;
+chomp($lastcount);
+
+# Record the current count..
+seek COUNT,0,0;
+print COUNT "$count\n" unless $dry;
+close COUNT;
+
+# If any expensive automatic workloads are underway, grant an allowance of slow queries.
+for my $lock (@locks) {
+	if (-f $lock) {
+		$warn += $lock_allowance;
+		$crit += $lock_allowance;
+	} 
+	last;
+}
+
+my $message = '';
+# Find the delta, but deal gracefully with recently-rotated logs.
+if ($count < $lastcount) {
+	$delta = $count;
+	$message = "Slow query log truncated. $delta records so far.";
+	unless ($dry) {	
+		open COUNT, ">$countfile" or die "$countfile: $!";
+		print COUNT $count;
+		close COUNT;
+	}
+} else {
+	$delta = $count - $lastcount;
+        $message = join '',
+                "Slow query log has $delta new record",
+                $delta > 1 ? 's' : '',
+                ' in the past ',
+                $lastcount_time == 1 ? 'hour.' : "$lastcount_time hours.";
+}
+
+if ($delta >= $crit) {
+	print "CRITICAL: $message\n";
+	exit $ERRORS{CRITICAL};
+} elsif ($delta >= $warn) {
+	print "WARNING: $message\n";
+	exit $ERRORS{WARNING};
+} else {
+	print "OK: $message\n";
+	exit $ERRORS{OK};
+}
+

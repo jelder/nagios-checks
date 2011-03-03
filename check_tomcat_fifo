@@ -1,0 +1,26 @@
+#!/bin/bash
+# Detects file handle leaks in tomcat instances.
+# Jacob Elder 2007-05-02
+PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
+. /usr/lib/nagios/plugins/utils.sh
+WARNING=$1
+CRITICAL=$2
+BASE=$3
+if [ ! $WARNING ] || [ ! $CRITICAL ] || [ ! $BASE ] || [ ! -d $BASE ]  ; then
+	echo Usage: $0 WARN CRIT BASE
+	echo BASE will be something like /app/tomcat/tomcat-instances/recengine
+	exit 75
+fi
+PID=`ps --user tomcat --format "pid=,cmd=" | grep $BASE | sed -n '1 s/ *// p' | cut -d' ' -f1`
+FIFO=`lsof -p $PID | grep -c FIFO`
+NAME=`basename $BASE`
+if [ $FIFO -gt $CRITICAL ] ; then
+	echo "CRITICAL: $NAME leaking FIFOs again. ($FIFO > $CRITICAL)."
+	exit $STATE_CRITICAL
+elif [ $FIFO -gt $WARNING ] ; then
+	echo "WARNING: $NAME leaking FIFOs again. ($FIFO > $WARNING)."
+	exit $STATE_WARNING
+else
+	echo "SUCCESS: $NAME has $FIFO open FIFOs."
+	exit $STATE_SUCCESS
+fi

@@ -1,0 +1,90 @@
+#!/usr/bin/perl
+# check_mount
+# Jacob Elder <jacob.elder@gmail.com>
+# $Id: check_mount 27531 2008-01-10 22:03:47Z jelder $ 
+use strict;
+use warnings;
+use File::Basename;
+use Getopt::Long;
+use lib '/usr/lib/nagios/plugins';
+use utils qw (%ERRORS);
+
+my $fstab = 0;
+my $timeout = 2;
+
+sub help () {
+	print <<END;
+Usage: check_mount MOUNTPOINT [MOUNTPOINT] ...
+
+        --fstab         Check all paths mentioned in /etc/fstab (except noauto, default $fstab)
+        --timeout       Timeout for any one check (default is $timeout)
+        --help          This text.
+ 
+Any numer of mount points may be specified. For example, to check all ad-hoc mounted filesystems:
+	check_mount /mnt/*
+
+END
+	exit 75;
+}
+
+GetOptions(
+	'fstab!'	=> \$fstab,
+        'timeout=i'       => \$timeout,
+	'help'		=> \&help
+) or help;
+
+my %failures;
+my @paths;
+
+if ($fstab) {
+	open FSTAB, '</etc/fstab' or die $!;
+	while (<FSTAB>) {
+		chomp;
+		next if m/^$/;
+		next if m/^#/;
+		my ($spec, $file, $vfstype, $mntopts, $freq, $passno) = split /\s+/;
+		push @paths, $file unless $mntopts =~ /noauto/;
+	}
+}
+
+# Prune inappropriate paths
+{
+	my @paths_clean;
+	for my $path (@paths,@ARGV) {
+		next unless $path =~ m#^/#;	# relative
+		next if $path eq '/';		# impossible
+		next if basename($path) eq '*';	# stupid
+		push @paths_clean, $path;
+	}
+	@paths = @paths_clean;
+}
+
+help unless @paths;
+
+for my $path (@paths) {
+    eval {
+        local $SIG{ALRM} = sub { die "Timeout after $timeout seconds\n" };
+        alarm $timeout;
+        die "Not a directory\n" unless -d $path;
+	my $pathdev = (stat $path)[0];
+	my $parent = dirname $path;
+	my $parentdev = (stat dirname $path)[0];
+	opendir DIR, $path or die "$!\n";
+	readdir DIR or die "$!\n";
+	closedir DIR or die "$!\n";
+	die "Not mounted\n" if $pathdev == $parentdev;
+        alarm 0;
+    };
+    chomp($failures{$path} = $@) if $@;
+}
+
+if (%failures) {
+	my @status = ();
+	push @status, "$_: $failures{$_}" for keys %failures;
+	print join(', ', @status), "\n";
+	exit $ERRORS{CRITICAL};
+} else {
+	print 'All ', scalar @paths, " checked mount points are OK.\n";
+	exit $ERRORS{OK};
+}
+

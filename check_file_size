@@ -1,0 +1,61 @@
+#!/usr/bin/perl
+# Checks a list of files and warns about large files.
+# Jacob Elder <jacob.elder@gmail.com> 2006-11-22
+#
+use strict;
+use warnings;
+
+use lib "/usr/lib/nagios/plugins" ;
+use utils qw(%ERRORS);
+
+sub help() {
+        print <<END;
+Usage: $0 WARN CRIT FILE [FILE...] 
+
+WARN and CRIT can by perl expressions, for example:
+
+check_file_size 1024*1024*1024*1.25 1024*1024*1024*1.75 /www/logs/*.log
+
+END
+        exit 64;
+}
+
+help unless @ARGV > 2;
+
+# Allow arguments to be specified as "1024*1024*1024*1.25"
+my $warn = eval shift @ARGV;
+my $crit = eval shift @ARGV;
+
+my @warn_files;
+my @crit_files;
+
+for my $file (@ARGV) {
+	next unless -f $file;
+	my $size = (stat $file)[7];
+	if ($size > $warn) {
+		push @warn_files, "$file: $size";
+	} elsif ($size > $crit) {
+		push @crit_files, "$file: $size";
+	}
+}
+
+sub show ($@) {
+       my ($state,@list) = @_;
+       print "File size $state: ";
+       print join ', ', @list;
+}
+
+if (@crit_files) {
+       show "warning", @crit_files;
+       show "critical", @warn_files;
+       exit $ERRORS{CRITICAL};
+} elsif (@warn_files) {
+	show "warning", @warn_files;
+	exit $ERRORS{WARNING};
+} else {
+	print "All " . scalar(@ARGV) . " checked files are within acceptable limits.";
+	exit $ERRORS{OK};
+}
+
+END { print "\n"; }
+
