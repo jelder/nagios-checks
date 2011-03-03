@@ -12,7 +12,7 @@ sub help() {
         print <<END;
 Usage: $0 WARN CRIT FILE [FILE...] 
 
-WARN and CRIT can by perl expressions, for example:
+WARN and CRIT can be perl expressions, for example:
 
 check_file_size 1024*1024*1024*1.25 1024*1024*1024*1.75 /www/logs/*.log
 
